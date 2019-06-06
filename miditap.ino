@@ -6,11 +6,11 @@
 ButtonDebounce button(TAP_PIN, 50);
 
 // all time periods are in MICRO seconds (there's 1.000.000 of those in a second)
-// tap intervals longer than 3s are interpreted as onset of a new tap sequence.
+// tap intervals longer than 2s are interpreted as onset of a new tap sequence.
 // this sets a lower limit on the frequency of tapping: 20bpm
-#define MAXIMUM_TAP_INTERVAL 1000L * 3000
-// hold for 1s to reset tempo and stop sending clock signals
-#define HOLD_RESET_DURATION 1000L * 1000
+#define MAXIMUM_TAP_INTERVAL 1000L * 2000
+// hold for 2s to reset tempo and stop sending clock signals
+#define HOLD_RESET_DURATION 1000L * 2000
 
 // how many taps should be remembered? the clock period will be calculated based on
 // all remembered taps, i.e. it will be the average of the last TAP_MEMORY-1 periods
@@ -18,15 +18,14 @@ ButtonDebounce button(TAP_PIN, 50);
 long tapTimes[TAP_MEMORY];
 // counter
 long timesTapped = 0;
+#include <usbh_midi.h>
+#include <usbhub.h>
+#include <SPI.h>
 
+USB Usb;
+USBHub Hub(&Usb);
+USBH_MIDI Midi(&Usb);
 
-// to be able to debug via the USB Serial interface, write the MIDI
-// messages to another set of digital pins using SoftwareSerial
-#include <SoftwareSerial.h>
-#define MIDI_RX_PIN 2 // not actually used (should be an interruptable pin in theory)
-#define MIDI_TX_PIN 10 // SoftwareSerial output port -- connect to MIDI jack pin 5 via 220 Ohm resistor
-// more details on MIDI jack wiring: https://www.arduino.cc/en/uploads/Tutorial/MIDI_bb.png
-SoftwareSerial Midi(MIDI_RX_PIN, MIDI_TX_PIN);
 
 // use the PWM-compatible pins 3, 5, 6 or 11 if you want a nice logarithmic fade
 // (PWM on pins 9 and 10 is blocked by the hardware timer used for the MIDI message
@@ -63,9 +62,14 @@ void setup() {
   digitalWrite(LED_PIN, HIGH);
 
   // use hardware serial for debugging
-  Serial.begin(9600);
+  Serial.begin(115200);
   // software serial to send MIDI clocks
-  Midi.begin(31250);
+//  Midi.begin(31250);
+
+    if (Usb.Init() == -1) {
+        while (1); //halt
+    }//if (Usb.Init() == -1...
+    delay( 200 );
 
   // set up tap input pin and callback from ButtonDebounce library
   pinMode(TAP_PIN, INPUT_PULLUP);
@@ -78,6 +82,8 @@ void setup() {
   // cause first call to loop() to play the LED animation to signal the pedal is ready
   reset = true;
 }
+
+
 
 // MIDI messages are sent by the interrupt-based timer, only need to read the
 // debounced tap inputs in the loop
@@ -104,8 +110,8 @@ void loop() {
 // update the 
 void setClockPulse() {
   clockPeriod = (tapTimes[timesTapped - 1] - tapTimes[0]) / ((timesTapped - 1) * CLOCKS_PER_BEAT);
-  Serial.print("New tap period (ms): ");
-  Serial.println(clockPeriod * CLOCKS_PER_BEAT / 1000);
+ // Serial.print("New tap period (ms): ");
+ // Serial.println(clockPeriod * CLOCKS_PER_BEAT / 1000);
   if (clockPulseActive) {
     Timer1.setPeriod(clockPeriod);
   } else {
@@ -196,16 +202,21 @@ void stopWaiting() {
 void sendClockPulse() {
   // check if lastTapTime has been ages ago and, if the
   // debounced button is still HIGH, stop the clock
-  if (button.state() == HIGH and micros() - tapTimes[timesTapped - 1] > HOLD_RESET_DURATION) {
-    Serial.println("Reset");
+ // if (button.state() == HIGH and micros() - tapTimes[timesTapped - 1] > HOLD_RESET_DURATION) {
+//turn off clock after 2 seconds of inactivity automatically, Waldorf Blofeld will keep time...
+ if (micros() - tapTimes[timesTapped - 1] > HOLD_RESET_DURATION) {
+  //  Serial.println("Reset");
     stopClockPulse();
     return;
   }
 
   // send MIDI clock
-  Midi.write(0xF8);
-
+ // Midi.write(0xF8);
+ //send USB Host midi clock on Port 2 for a Waldorf Blofeld, adjust to your liking.
+ uint8_t msg[3];
+Usb.Task();
+    msg[0] = 248;
+    Midi.SendData(msg,1);
   analogWrite(LED_PIN, LED_BRIGHTNESS[blinkCount]);
   blinkCount = (blinkCount + 1) % CLOCKS_PER_BEAT;
 }
-
